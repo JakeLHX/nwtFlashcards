@@ -399,6 +399,39 @@ def build_scriptures(
     return scriptures, stats
 
 
+def filter_by_include(
+    all_scriptures: list[dict],
+    include_path: Path,
+    library: NwtLibrary,
+) -> tuple[list[dict], list[str]]:
+    """Return scriptures from the full set that appear in include.txt."""
+    by_code = {item["bible_code"]: item for item in all_scriptures}
+    filtered: list[dict] = []
+    seen: set[str] = set()
+    missing: list[str] = []
+
+    if not include_path.is_file():
+        return filtered, missing
+
+    for book_name, chapter, verse in parse_include_file(include_path):
+        book = resolve_book_number(library, book_name)
+        if not book:
+            missing.append(f"{book_name} {chapter}:{verse} (unknown book)")
+            continue
+
+        bible_code = f"{book:02d}{chapter:03d}{verse:03d}"
+        if bible_code in seen:
+            continue
+        seen.add(bible_code)
+
+        if bible_code in by_code:
+            filtered.append(by_code[bible_code])
+        else:
+            missing.append(library.reference(bible_code))
+
+    return filtered, missing
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build scripture flashcard JSON.")
     parser.add_argument(
@@ -416,12 +449,19 @@ def main() -> int:
         "-o",
         type=Path,
         default=Path(__file__).parent.parent / "src" / "data" / "scriptures.json",
+        help="Filtered output: verses listed in include.txt",
+    )
+    parser.add_argument(
+        "--full-output",
+        type=Path,
+        default=Path(__file__).parent.parent / "src" / "data" / "430_scriptures.json",
+        help="Full catalog of all course scriptures",
     )
     parser.add_argument(
         "--include",
         type=Path,
         default=Path(__file__).parent / "include.txt",
-        help="Additional scripture references to include (one reference per line)",
+        help="Scripture references to include in the filtered output",
     )
     args = parser.parse_args()
 
@@ -432,28 +472,46 @@ def main() -> int:
         print(f"NWT RTF directory not found: {args.nwt_dir}", file=sys.stderr)
         return 1
 
-    scriptures, stats = build_scriptures(args.extracted, args.nwt_dir, args.include)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
+    all_scriptures, stats = build_scriptures(args.extracted, args.nwt_dir, args.include)
+    library = NwtLibrary(args.nwt_dir)
+    filtered, missing_from_full = filter_by_include(all_scriptures, args.include, library)
+
+    args.full_output.parent.mkdir(parents=True, exist_ok=True)
+    args.full_output.write_text(
+        json.dumps(all_scriptures, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     args.output.write_text(
-        json.dumps(scriptures, indent=2, ensure_ascii=False),
+        json.dumps(filtered, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
     print(
-        f"Built {stats['unique_verses']} unique verses "
-        f"({stats['with_text']} with NWT text, "
-        f"{stats['from_include']} from include.txt) -> {args.output}",
+        f"Built {stats['unique_verses']} full verses -> {args.full_output}",
+        file=sys.stderr,
+    )
+    print(
+        f"Filtered {len(filtered)} verses from include.txt -> {args.output}",
         file=sys.stderr,
     )
     if stats["missing_text"]:
         print(
-            f"Warning: {len(stats['missing_text'])} verses missing text:",
+            f"Warning: {len(stats['missing_text'])} full-set verses missing NWT text:",
             file=sys.stderr,
         )
         for reference in stats["missing_text"][:10]:
             print(f"  - {reference}", file=sys.stderr)
         if len(stats["missing_text"]) > 10:
             print(f"  ... and {len(stats['missing_text']) - 10} more", file=sys.stderr)
+    if missing_from_full:
+        print(
+            f"Warning: {len(missing_from_full)} include.txt verses not in full set:",
+            file=sys.stderr,
+        )
+        for reference in missing_from_full[:10]:
+            print(f"  - {reference}", file=sys.stderr)
+        if len(missing_from_full) > 10:
+            print(f"  ... and {len(missing_from_full) - 10} more", file=sys.stderr)
 
     return 0
 
