@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build:data": "python scripts/build_scriptures.py",
+    "icons": "pwa-asset-generator public/logo.png public/icons --icon-only --favicon --type png --path-override /icons",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.4.1",
+    "pwa-asset-generator": "^8.1.4",
     "vite": "^6.3.5"
   }
 }

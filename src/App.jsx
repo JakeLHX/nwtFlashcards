@@ -14,7 +14,7 @@ function shuffleArray(items) {
 
 export default function App() {
   const [mode, setMode] = useState('reference')
-  const [deck, setDeck] = useState(() => scriptures)
+  const [deck, setDeck] = useState(() => shuffleArray(scriptures))
   const [index, setIndex] = useState(0)
   const [flipped, setFlipped] = useState(false)
 
