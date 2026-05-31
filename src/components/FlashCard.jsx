@@ -1,9 +1,4 @@
 export default function FlashCard({ scripture, mode, flipped, onFlip }) {
-  const lessonLabel =
-    scripture.lessons.length === 1
-      ? `Lesson ${scripture.lessons[0]}`
-      : `Lessons ${scripture.lessons.sort((a, b) => a - b).join(', ')}`
-
   const reference = scripture.text
   const text = scripture.scripture || 'Scripture text unavailable.'
 
@@ -14,8 +9,8 @@ export default function FlashCard({ scripture, mode, flipped, onFlip }) {
 
   const back =
     mode === 'text'
-      ? { label: lessonLabel, content: reference, className: 'reference reference-back' }
-      : { label: lessonLabel, content: text, className: 'scripture-text' }
+      ? { label: 'Reference', content: reference, className: 'reference reference-back' }
+      : { label: 'Scripture', content: text, className: 'scripture-text' }
 
   return (
     <button

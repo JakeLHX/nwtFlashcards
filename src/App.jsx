@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useState } from 'react'
 import scriptures from './data/scriptures.json'
 import FlashCard from './components/FlashCard'
 import './App.css'
@@ -23,14 +23,6 @@ export default function App() {
     setFlipped(false)
   }, [])
 
-  const lessons = useMemo(() => {
-    const set = new Set()
-    for (const s of scriptures) {
-      for (const l of s.lessons) set.add(l)
-    }
-    return [...set].sort((a, b) => a - b)
-  }, [])
-
   const current = deck[index]
 
   const shuffle = useCallback(() => {
@@ -53,7 +45,7 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>NWT Flashcards</h1>
-        <p className="subtitle">Enjoy Life Forever — scripture memorisation</p>
+        <p className="subtitle">New World Translation — scripture memorisation</p>
       </header>
 
       <main className="main">
@@ -79,34 +71,37 @@ export default function App() {
           </button>
         </div>
 
-        {deck.length === 0 ? (
-          <p className="empty">No scriptures available.</p>
-        ) : (
-          <>
-            <FlashCard
-              scripture={current}
-              mode={mode}
-              flipped={flipped}
-              onFlip={() => setFlipped((f) => !f)}
-            />
-
-            <div className="nav">
-              <button type="button" className="btn btn-nav" onClick={goPrev}>
-                ← Previous
+        <div className="nav">
+              <button type="button" className="btn btn-nav" onClick={goPrev} aria-label="Previous card">
+                ← Prev
               </button>
               <span className="counter">
                 {index + 1} / {deck.length}
               </span>
-              <button type="button" className="btn btn-nav" onClick={goNext}>
+              <button type="button" className="btn btn-nav" onClick={goNext} aria-label="Next card">
                 Next →
               </button>
+            </div>
+
+        {deck.length === 0 ? (
+          <p className="empty">No scriptures available.</p>
+        ) : (
+          <>
+            <div className="card-area">
+              <FlashCard
+                scripture={current}
+                mode={mode}
+                flipped={flipped}
+                onFlip={() => setFlipped((f) => !f)}
+              />
             </div>
           </>
         )}
       </main>
 
       <footer className="footer">
-        <p>{scriptures.length} unique scriptures from the Enjoy Life Forever course</p>
+        <p>{scriptures.length} unique scriptures from the New World Translation</p>
+        <p>Selected from the Enjoy Life Forever course and An Introduction to God's Word</p>
       </footer>
     </div>
   )

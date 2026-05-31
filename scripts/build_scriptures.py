@@ -61,6 +61,95 @@ def trim_url(url: str, bible_code: str) -> str:
     )
 
 
+def default_url(bible_code: str) -> str:
+    return (
+        f"https://www.jw.org/finder?pub=nwtsty&bible={bible_code}"
+        "&wtlocale=E&srcid=share"
+    )
+
+
+INCLUDE_REFERENCE = re.compile(
+    r"^([1-3]?\s?[A-Za-z]+(?:\s[A-Za-z]+)?)\s+(\d+):(.+)$"
+)
+
+BOOK_ALIASES = {
+    "Psalm": "Psalms",
+}
+
+
+def expand_verse_list(verses_part: str) -> list[int]:
+    verses: list[int] = []
+    for part in re.split(r",\s*", verses_part.strip()):
+        if "-" in part:
+            start, end = part.split("-", 1)
+            verses.extend(range(int(start), int(end) + 1))
+        else:
+            verses.append(int(part))
+    return verses
+
+
+def parse_include_file(include_path: Path) -> list[tuple[str, int, int]]:
+    """Parse include.txt into (book_name, chapter, verse) tuples."""
+    text = include_path.read_text(encoding="utf-8")
+    results: list[tuple[str, int, int]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        match = INCLUDE_REFERENCE.match(line)
+        if not match:
+            continue
+        book = BOOK_ALIASES.get(match.group(1), match.group(1))
+        chapter = int(match.group(2))
+        for verse in expand_verse_list(match.group(3)):
+            results.append((book, chapter, verse))
+    return results
+
+
+def resolve_book_number(library: NwtLibrary, book_name: str) -> int | None:
+    name = BOOK_ALIASES.get(book_name, book_name)
+    for book in range(1, 67):
+        if library.book_name(book) == name:
+            return book
+    return None
+
+
+def merge_include_scriptures(
+    seen: dict[str, dict],
+    include_path: Path,
+    library: NwtLibrary,
+    missing_text: list[str],
+) -> int:
+    if not include_path.is_file():
+        return 0
+
+    added = 0
+    for book_name, chapter, verse in parse_include_file(include_path):
+        book = resolve_book_number(library, book_name)
+        if not book:
+            missing_text.append(f"{book_name} {chapter}:{verse} (unknown book)")
+            continue
+
+        bible_code = f"{book:02d}{chapter:03d}{verse:03d}"
+        if bible_code in seen:
+            continue
+
+        scripture = library.verse_text(bible_code)
+        reference = library.reference(bible_code)
+        if not scripture:
+            missing_text.append(reference)
+
+        seen[bible_code] = {
+            "text": reference,
+            "scripture": scripture or "",
+            "url": default_url(bible_code),
+            "bible_code": bible_code,
+        }
+        added += 1
+
+    return added
+
+
 def load_book_names(nwt_dir: Path) -> list[str]:
     content = (nwt_dir / "nwt_101_E.rtf").read_text(encoding="utf-8", errors="replace")
     decoded = decode_rtf_text(content)
@@ -131,6 +220,9 @@ def parse_standard_chapters(content: str) -> dict[int, dict[int, str]]:
     return parse_segment(segment, 1)
 
 
+PSALM_HEADER = re.compile(r"(?:\}\{)?Psalm \}\{(\d+)\}(?:\}\{|-432\{)")
+
+
 def parse_psalm_section(section: str) -> dict[int, str]:
     marker = re.search(r"-432\{1\}\{|\{1\}\{", section)
     if not marker:
@@ -152,7 +244,7 @@ def parse_psalm_section(section: str) -> dict[int, str]:
 
 
 def parse_psalm_block(block: str, start_psalm: int, end_psalm: int) -> dict[int, dict[int, str]]:
-    header = re.match(r"\}\{Psalm \}\{(\d+)\}\{", block)
+    header = PSALM_HEADER.match(block.lstrip("}{"))
     rest = block[header.end() :] if header else block
 
     marker = re.search(r"-432\{1\}\{|\{1\}\{", rest)
@@ -188,7 +280,7 @@ def parse_psalm_block(block: str, start_psalm: int, end_psalm: int) -> dict[int,
 
 def parse_psalms(content: str) -> dict[int, dict[int, str]]:
     decoded = decode_rtf_text(content)
-    markers = list(re.finditer(r"\}\{Psalm \}\{(\d+)\}\{", decoded))
+    markers = list(PSALM_HEADER.finditer(decoded))
     psalms: dict[int, dict[int, str]] = {}
 
     for index, marker in enumerate(markers):
@@ -258,7 +350,11 @@ class NwtLibrary:
         return f"{self.book_name(book)} {chapter}:{verse}"
 
 
-def build_scriptures(extracted_path: Path, nwt_dir: Path) -> tuple[list[dict], dict]:
+def build_scriptures(
+    extracted_path: Path,
+    nwt_dir: Path,
+    include_path: Path | None = None,
+) -> tuple[list[dict], dict]:
     library = NwtLibrary(nwt_dir)
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     entries = [entry for entry in payload["entries"] if entry["type"] == "scripture"]
@@ -273,9 +369,6 @@ def build_scriptures(extracted_path: Path, nwt_dir: Path) -> tuple[list[dict], d
 
         bible_code = normalize_bible_code(raw_code)
         if bible_code in seen:
-            lesson = entry["lesson"]
-            if lesson not in seen[bible_code]["lessons"]:
-                seen[bible_code]["lessons"].append(lesson)
             continue
 
         scripture = library.verse_text(bible_code)
@@ -289,14 +382,18 @@ def build_scriptures(extracted_path: Path, nwt_dir: Path) -> tuple[list[dict], d
             "scripture": scripture or "",
             "url": trim_url(entry["url"], bible_code),
             "bible_code": bible_code,
-            "lessons": [entry["lesson"]],
         }
+
+    include_added = 0
+    if include_path:
+        include_added = merge_include_scriptures(seen, include_path, library, missing_text)
 
     scriptures = sorted(seen.values(), key=lambda item: item["text"])
     stats = {
         "total_entries": len(entries),
         "unique_verses": len(scriptures),
         "with_text": sum(1 for item in scriptures if item["scripture"]),
+        "from_include": include_added,
         "missing_text": missing_text,
     }
     return scriptures, stats
@@ -320,6 +417,12 @@ def main() -> int:
         type=Path,
         default=Path(__file__).parent.parent / "src" / "data" / "scriptures.json",
     )
+    parser.add_argument(
+        "--include",
+        type=Path,
+        default=Path(__file__).parent / "include.txt",
+        help="Additional scripture references to include (one reference per line)",
+    )
     args = parser.parse_args()
 
     if not args.extracted.is_file():
@@ -329,7 +432,7 @@ def main() -> int:
         print(f"NWT RTF directory not found: {args.nwt_dir}", file=sys.stderr)
         return 1
 
-    scriptures, stats = build_scriptures(args.extracted, args.nwt_dir)
+    scriptures, stats = build_scriptures(args.extracted, args.nwt_dir, args.include)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(scriptures, indent=2, ensure_ascii=False),
@@ -338,7 +441,8 @@ def main() -> int:
 
     print(
         f"Built {stats['unique_verses']} unique verses "
-        f"({stats['with_text']} with NWT text) -> {args.output}",
+        f"({stats['with_text']} with NWT text, "
+        f"{stats['from_include']} from include.txt) -> {args.output}",
         file=sys.stderr,
     )
     if stats["missing_text"]:
